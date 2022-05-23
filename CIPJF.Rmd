@@ -1,0 +1,209 @@
+---
+title: "CIPJF"
+author: "Qinyuan Xing"
+date: "2022/4/23"
+output:
+  pdf_document:
+    
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    code_folding: hide
+    number_sections: false
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = F, results = "markup", message = F)
+options(scientific=T, digits = 3) 
+```
+
+## 1. data import and clean
+```{r}
+# data 
+heart_disease = data.frame(read.csv("E:\\2022 Spring\\R\\heart_2020_cleaned.csv"))
+str(heart_disease)
+heart_disease$HeartDisease = ifelse(heart_disease$HeartDisease=="Yes",1,0)
+heart_disease$Smoking = as.factor(heart_disease$Smoking)
+heart_disease$AlcoholDrinking= as.factor(heart_disease$AlcoholDrinking)
+heart_disease$Stroke = as.factor(heart_disease$Stroke)
+heart_disease$DiffWalking = as.factor(heart_disease$DiffWalking)
+heart_disease$Sex = as.factor(heart_disease$Sex)
+heart_disease$AgeCategory = as.factor(heart_disease$AgeCategory)
+heart_disease$Race = as.factor(heart_disease$Race)
+heart_disease$Diabetic = as.factor(heart_disease$Diabetic)
+heart_disease$PhysicalActivity = as.factor(heart_disease$PhysicalActivity)
+heart_disease$GenHealth = as.factor(heart_disease$GenHealth)
+heart_disease$Asthma = as.factor(heart_disease$Asthma)
+heart_disease$KidneyDisease = as.factor(heart_disease$KidneyDisease)
+heart_disease$SkinCancer = as.factor(heart_disease$SkinCancer)
+summary(heart_disease)
+```
+## 2. Treatment variable = AlcoholDrinking (Yes/No)
+
+### 2.1 Sampling
+```{r alcohol}
+data0 = heart_disease[heart_disease$AlcoholDrinking=="No",]
+data1 = heart_disease[heart_disease$AlcoholDrinking=="Yes",]
+a = 0.02
+set.seed(1111)
+s0 = data0[sample(nrow(data0),size = floor(a*nrow(data0))),]
+s1 = data1[sample(nrow(data1),size = floor(a*nrow(data1))),]
+sdata = rbind(s0,s1)
+summary(sdata$AlcoholDrinking)
+```
+
+### 2.2 Estimate Propensity Score 
+```{r}
+# estimate Propensity score
+logmod = glm(AlcoholDrinking~.-HeartDisease,data = sdata,family = binomial(link = "logit"))
+sdata$ps = predict(logmod,type = "response")
+```
+
+```{r}
+library(Hmisc)
+histbackback(split(sdata$ps,sdata$AlcoholDrinking),main="PS before matching",probability = T)
+```
+
+### 2.3 Linear regression before matching
+```{r}
+# Linear regression before matching
+lmod_before = lm(HeartDisease~AlcoholDrinking+BMI+Smoking+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = sdata)
+summary(lmod_before)$coefficients[2,]
+confint(lmod_before,parm = 2,0.95)
+```
+Before matching,in the linear regression, the coef and P-value of AlcoholDrinking show that the effect of alcohol drinking is significant and people who like drinking are less likely to have heart disease.
+
+### 2.4 PSM
+```{r}
+# PSM
+library(MatchIt)
+match.res = matchit(AlcoholDrinking~BMI+Smoking+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = sdata,method = "nearest")
+matchsum = summary(match.res,standardize = T)$sum.matched
+data.frame(round(matchsum[,1:3],3))
+# absolute value of SMD (Standardized Mean Difference) <0.1 shows matching is OK for each variable.
+matched_data = match.data(match.res)
+
+histbackback(split(matched_data$ps,matched_data$AlcoholDrinking),main="PS after matching",probability = T)
+plot(match.res,type = "hist")
+match.matrix = data.frame(match.res$match.matrix)
+T_index = match(row.names(match.matrix),row.names(matched_data))
+C_index = match(match.matrix$match.res.match.matrix,row.names(matched_data))
+Tgroup = matched_data[T_index,]
+Cgroup = matched_data[C_index,]
+m1.test=t.test(Tgroup$HeartDisease,Cgroup$HeartDisease,paired = T)
+m1.test
+```
+
+The test show that after matching, the effect of alcoholdrinking(estimate ATT) is not significant.
+
+### 2.5 Linear regression after matching
+```{r}
+# LM after matching
+lmod_after = lm(HeartDisease~AlcoholDrinking+BMI+Smoking+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = matched_data)
+summary(lmod_after)$coefficients[2,]
+confint(lmod_after,2,0.95)
+
+```
+
+### 2.6 Results
+```{r}
+#Results
+alcohol.res = data.frame(method = c("LR before","PSM","LR after"),est_ATT=c(summary(lmod_before)$coefficients[2,1],m1.test$estimate,summary(lmod_after)$coefficients[2,1]),CI.lower = c(confint(lmod_before,2,0.95)[1],m1.test$conf.int[1],confint(lmod_after,2,0.95)[1]),CI.upper= c(confint(lmod_before,2,0.95)[2],m1.test$conf.int[2],confint(lmod_after,2,0.95)[2]),Pvalue = c(summary(lmod_before)$coefficients[2,4],m1.test$p.value,summary(lmod_after)$coefficients[2,4]),significant=c("Yes","No","No"))
+alcohol.res
+```
+
+## 3. Treatment variable = Smoking(Yes/No)
+
+### 3.1 Sampling
+```{r Smoke}
+data.0 = heart_disease[heart_disease$Smoking=="No",]
+data.1 = heart_disease[heart_disease$Smoking=="Yes",]
+b = 0.01
+set.seed(2222)
+s.0 = data.0[sample(nrow(data.0),size = floor(a*nrow(data.0))),]
+s.1 = data.1[sample(nrow(data.1),size = floor(b*nrow(data.1))),]
+s.data = rbind(s.0,s.1)
+summary(s.data$Smoking)
+```
+
+### 3.2 Estimate Propensity Score
+```{r}
+# estimate propensity score
+log.mod = glm(Smoking~.-HeartDisease,data = s.data,family = binomial(link = "logit"))
+s.data$ps = predict(log.mod,type = "response")
+```
+
+```{r}
+histbackback(split(s.data$ps,s.data$Smoking),main="PS before matching",probability = T)
+```
+
+### 3.3 Linear regression before matching
+```{r}
+# Linear regression before matching
+l.mod_before = lm(HeartDisease~Smoking+BMI+AlcoholDrinking+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = s.data)
+summary(l.mod_before)$coefficients[2,]
+confint(l.mod_before,parm = 2,0.95)
+```
+
+### 3.4 PSM
+```{r}
+#PSM
+match.res2 = matchit(Smoking~BMI+AlcoholDrinking+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = s.data,method = "nearest",caliper = 0.05)
+matchsum2 = summary(match.res2,standardize = T)$sum.matched
+summary(match.res2,standardize = T)$nn
+data.frame(round(matchsum2[,1:3],3))
+matched_data2 = match.data(match.res2)
+
+histbackback(split(matched_data2$ps,matched_data2$Smoking),main="PS after matching",probability = T)
+plot(match.res2,type = "hist")
+match.matrix2 = data.frame(match.res2$match.matrix)
+T_index2 = match(row.names(match.matrix2),row.names(matched_data2))
+C_index2 = match(match.matrix2$match.res2.match.matrix,row.names(matched_data2))
+Tgroup2 = matched_data2[T_index2,]
+Cgroup2 = matched_data2[C_index2,]
+m2.test=t.test(Tgroup2$HeartDisease,Cgroup2$HeartDisease,paired = T)
+m2.test
+```
+
+### 3.5 Linear regression after matching
+```{r}
+#LR after matching
+l.mod_after = lm(HeartDisease~Smoking+AlcoholDrinking+BMI+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = matched_data2)
+summary(l.mod_after)$coefficients[2,]
+confint(l.mod_after,2,0.95)
+```
+
+### 3.6 IPW
+```{r}
+#IPW
+library(WeightIt)
+library(cobalt)
+library(survey)
+balance_before2 = bal.tab(Smoking~BMI+AlcoholDrinking+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = s.data,estimand="ATT",m.threshold=0.1)$Balance
+balance_before2[,1:3]
+weight.res2 = weightit(Smoking~BMI+AlcoholDrinking+Stroke+PhysicalHealth+MentalHealth+DiffWalking+Sex+AgeCategory+Race+Diabetic+PhysicalActivity+GenHealth+SleepTime+Asthma+KidneyDisease+SkinCancer,data = s.data,estimand = "ATT",method = "ps")
+balance_after2 = bal.tab(weight.res2,thresholds = c(m=0.1))$Balance
+balance_after2[,c(1,3,4)]
+d.w2 = svydesign(ids = ~1,weights = get.w(weight.res2),data = s.data)
+w.mod = svyglm(HeartDisease ~ Smoking,design = d.w2)
+summary(w.mod)$coefficients[2,]
+confint(w.mod,2,0.95)
+```
+
+### 3.7 Results
+```{r}
+#Results
+smoke.res = data.frame(method = c("LR before","PSM","LR after","IPW"),est_ATT=c(summary(l.mod_before)$coefficients[2,1],m2.test$estimate,summary(l.mod_after)$coefficients[2,1],summary(w.mod)$coefficients[2,1]),CI.lower = c(confint(l.mod_before,2,0.95)[1],m2.test$conf.int[1],confint(l.mod_after,2,0.95)[1],confint(w.mod,2,0.95)[1]),CI.upper= c(confint(l.mod_before,2,0.95)[2],m2.test$conf.int[2],confint(l.mod_after,2,0.95)[2],confint(w.mod,2,0.95)[2]),Pvalue = c(summary(l.mod_before)$coefficients[2,4],m2.test$p.value,summary(l.mod_after)$coefficients[2,4],summary(w.mod)$coefficients[2,4]),significant=c("Yes","Yes","Yes","Yes"))
+smoke.res
+```
+
+
+
+
+
+
+
+
